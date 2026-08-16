@@ -1,0 +1,11 @@
+.vs/
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+*.sln
+*.suo
+*.opensdf
+*.user
+*.userprefs
+Thumbs.db
