@@ -18,30 +18,6 @@ namespace
 // invoke CaptureScene and compress in the same game-thread turn. The CVAR is
 // intentionally runtime-only so the conversion can be compared without
 // touching Blueprint assets or project config.
-TAutoConsoleVariable<int32> CVarImageCompressionLinearToGamma(
-	TEXT("edge.ImageCompression.LinearToGamma"),
-	1,
-	TEXT("Convert linear render-target readback to display/sRGB values before image compression."),
-	ECVF_Default);
-
-TAutoConsoleVariable<float> CVarImageCompressionGamma(
-	TEXT("edge.ImageCompression.Gamma"),
-	0.65f,
-	TEXT("Gamma applied to capture pixels before compression; 0.65 matches the validated low-light reference."),
-	ECVF_Default);
-
-TAutoConsoleVariable<float> CVarImageCompressionBrightness(
-	TEXT("edge.ImageCompression.Brightness"),
-	1.0f,
-	TEXT("Optional brightness multiplier applied to capture pixels before compression; 1 disables it."),
-	ECVF_Default);
-
-TAutoConsoleVariable<float> CVarImageCompressionContrast(
-	TEXT("edge.ImageCompression.Contrast"),
-	1.0f,
-	TEXT("Optional contrast multiplier applied to capture pixels before compression; 1 disables it."),
-	ECVF_Default);
-
 TAutoConsoleVariable<int32> CVarImageCompressionWarmupFrames(
 	TEXT("edge.ImageCompression.WarmupFrames"),
 	8,
@@ -53,34 +29,6 @@ TAutoConsoleVariable<int32> CVarImageCompressionDumpFrames(
 	0,
 	TEXT("Dump the first N compressed JPEG readbacks to Saved/CaptureDiagnostics for inspection."),
 	ECVF_Default);
-
-uint8 EnhanceCaptureChannel(uint8 Value, float Gamma, float Brightness, float Contrast)
-{
-	const float Normalized = static_cast<float>(Value) / 255.0f;
-	const float GammaCorrected = FMath::Pow(FMath::Clamp(Normalized, 0.0f, 1.0f), Gamma);
-	const float Adjusted = ((GammaCorrected - 0.5f) * Contrast + 0.5f) * Brightness;
-	return static_cast<uint8>(FMath::RoundToInt(FMath::Clamp(Adjusted, 0.0f, 1.0f) * 255.0f));
-}
-
-void EnhanceCapturePixels(TArray<FColor>& Pixels)
-{
-	const float Gamma = FMath::Clamp(CVarImageCompressionGamma.GetValueOnGameThread(), 0.1f, 4.0f);
-	const float Brightness = FMath::Clamp(CVarImageCompressionBrightness.GetValueOnGameThread(), 0.1f, 4.0f);
-	const float Contrast = FMath::Clamp(CVarImageCompressionContrast.GetValueOnGameThread(), 0.1f, 4.0f);
-	if (FMath::IsNearlyEqual(Gamma, 1.0f)
-		&& FMath::IsNearlyEqual(Brightness, 1.0f)
-		&& FMath::IsNearlyEqual(Contrast, 1.0f))
-	{
-		return;
-	}
-
-	for (FColor& Pixel : Pixels)
-	{
-		Pixel.R = EnhanceCaptureChannel(Pixel.R, Gamma, Brightness, Contrast);
-		Pixel.G = EnhanceCaptureChannel(Pixel.G, Gamma, Brightness, Contrast);
-		Pixel.B = EnhanceCaptureChannel(Pixel.B, Gamma, Brightness, Contrast);
-	}
-}
 
 bool ReadRenderTargetPixels(
 	UTextureRenderTarget2D& RenderTarget,
@@ -98,10 +46,9 @@ bool ReadRenderTargetPixels(
 		return false;
 	}
 
-	// Do not mutate SRGB or recreate the render target during readback.  The
-	// asset is authored with SRGB disabled, and changing that flag here can
-	// invalidate the capture resource on the first frame.  LinearToGamma below
-	// is the explicit, one-time conversion for the CPU image.
+	// Do not mutate SRGB or recreate the render target during readback. The
+	// explicit linear-to-sRGB readback conversion below is the only color
+	// conversion before JPEG encoding.
 	// Flush a SceneCapture render queued earlier in this game-thread turn before
 	// the CPU readback.
 	FlushRenderingCommands();
@@ -127,21 +74,18 @@ bool ReadRenderTargetPixels(
 	}
 
 	FReadSurfaceDataFlags ReadFlags(RCM_UNorm);
-	ReadFlags.SetLinearToGamma(CVarImageCompressionLinearToGamma.GetValueOnGameThread() != 0);
+	ReadFlags.SetLinearToGamma(true);
 	if (!RTResource->ReadPixels(OutPixels, ReadFlags))
 	{
 		UE_LOG(
 			LogImageCompression,
 			Warning,
-			TEXT("EDGE_CAPTURE_READ_FAILED size=%dx%d linear_to_gamma=%d"),
+			TEXT("EDGE_CAPTURE_READ_FAILED size=%dx%d linear_to_srgb=1"),
 			RenderTarget.SizeX,
-			RenderTarget.SizeY,
-			ReadFlags.GetLinearToGamma() ? 1 : 0);
+			RenderTarget.SizeY);
 		OutPixels.Reset();
 		return false;
 	}
-	EnhanceCapturePixels(OutPixels);
-
 	const int32 ExpectedPixels = RenderTarget.SizeX * RenderTarget.SizeY;
 	if (OutPixels.Num() != ExpectedPixels)
 	{
@@ -172,7 +116,7 @@ bool ReadRenderTargetPixels(
 		UE_LOG(
 			LogImageCompression,
 			Display,
-			TEXT("EDGE_CAPTURE_STATS count=%d size=%dx%d srgb=%d mean_rgb=(%.1f,%.1f,%.1f) max=%d linear_to_gamma=%d"),
+			TEXT("EDGE_CAPTURE_STATS count=%d size=%dx%d srgb=%d mean_rgb=(%.1f,%.1f,%.1f) max=%d linear_to_srgb=1"),
 			CaptureStatsLogCount,
 			RenderTarget.SizeX,
 			RenderTarget.SizeY,
@@ -180,8 +124,7 @@ bool ReadRenderTargetPixels(
 			static_cast<double>(ChannelSums[0]) / PixelCount,
 			static_cast<double>(ChannelSums[1]) / PixelCount,
 			static_cast<double>(ChannelSums[2]) / PixelCount,
-			MaxChannel,
-			ReadFlags.GetLinearToGamma() ? 1 : 0);
+			MaxChannel);
 	}
 
 	const int32 WarmupFrames = FMath::Max(
@@ -208,21 +151,19 @@ bool ReadRenderTargetPixels(
 		UE_LOG(
 			LogImageCompression,
 			Warning,
-			TEXT("EDGE_CAPTURE_READ_BLACK size=%dx%d linear_to_gamma=%d; capture may not have completed or the scene/clear color is black"),
+			TEXT("EDGE_CAPTURE_READ_BLACK size=%dx%d linear_to_srgb=1; capture may not have completed or the scene/clear color is black"),
 			RenderTarget.SizeX,
-			RenderTarget.SizeY,
-			ReadFlags.GetLinearToGamma() ? 1 : 0);
+			RenderTarget.SizeY);
 	}
 	else
 	{
 		UE_LOG(
 			LogImageCompression,
 			VeryVerbose,
-			TEXT("EDGE_CAPTURE_READ_OK size=%dx%d max_channel=%d linear_to_gamma=%d"),
+			TEXT("EDGE_CAPTURE_READ_OK size=%dx%d max_channel=%d linear_to_srgb=1"),
 			RenderTarget.SizeX,
 			RenderTarget.SizeY,
-			MaxChannel,
-			ReadFlags.GetLinearToGamma() ? 1 : 0);
+			MaxChannel);
 	}
 	return true;
 }
