@@ -14,6 +14,9 @@ DEFINE_LOG_CATEGORY_STATIC(LogImageCompression, Log, All);
 
 namespace
 {
+constexpr float CaptureExposureEv = 1.0f;
+constexpr float CaptureExposureScale = 2.0f;
+
 // RenderTarget readback is a synchronization point for Blueprint callers that
 // invoke CaptureScene and compress in the same game-thread turn. The CVAR is
 // intentionally runtime-only so the conversion can be compared without
@@ -46,9 +49,9 @@ bool ReadRenderTargetPixels(
 		return false;
 	}
 
-	// Do not mutate SRGB or recreate the render target during readback. The
-	// explicit linear-to-sRGB readback conversion below is the only color
-	// conversion before JPEG encoding.
+	// SceneCapture produces tone-mapped FinalColorLDR in an sRGB render target.
+	// Read the encoded 8-bit values directly so JPEG compression does not apply
+	// a second gamma conversion.
 	// Flush a SceneCapture render queued earlier in this game-thread turn before
 	// the CPU readback.
 	FlushRenderingCommands();
@@ -74,15 +77,16 @@ bool ReadRenderTargetPixels(
 	}
 
 	FReadSurfaceDataFlags ReadFlags(RCM_UNorm);
-	ReadFlags.SetLinearToGamma(true);
+	ReadFlags.SetLinearToGamma(false);
 	if (!RTResource->ReadPixels(OutPixels, ReadFlags))
 	{
 		UE_LOG(
 			LogImageCompression,
 			Warning,
-			TEXT("EDGE_CAPTURE_READ_FAILED size=%dx%d linear_to_srgb=1"),
+			TEXT("EDGE_CAPTURE_READ_FAILED size=%dx%d ue5_exposure_ev=%.1f"),
 			RenderTarget.SizeX,
-			RenderTarget.SizeY);
+			RenderTarget.SizeY,
+			CaptureExposureEv);
 		OutPixels.Reset();
 		return false;
 	}
@@ -97,6 +101,20 @@ bool ReadRenderTargetPixels(
 			OutPixels.Num());
 		OutPixels.Reset();
 		return false;
+	}
+
+	// Apply exposure in UE5 while converting the runtime blueprint's linear
+	// render target to the sRGB JPEG sent to Jetson.
+	for (FColor& Pixel : OutPixels)
+	{
+		const FLinearColor Linear(
+			static_cast<float>(Pixel.R) / 255.0f,
+			static_cast<float>(Pixel.G) / 255.0f,
+			static_cast<float>(Pixel.B) / 255.0f,
+			static_cast<float>(Pixel.A) / 255.0f);
+		FLinearColor Exposed = Linear * CaptureExposureScale;
+		Exposed.A = Linear.A;
+		Pixel = Exposed.ToFColor(true);
 	}
 
 	uint8 MaxChannel = 0;
@@ -116,7 +134,7 @@ bool ReadRenderTargetPixels(
 		UE_LOG(
 			LogImageCompression,
 			Display,
-			TEXT("EDGE_CAPTURE_STATS count=%d size=%dx%d srgb=%d mean_rgb=(%.1f,%.1f,%.1f) max=%d linear_to_srgb=1"),
+			TEXT("EDGE_CAPTURE_STATS count=%d size=%dx%d srgb=%d mean_rgb=(%.1f,%.1f,%.1f) max=%d ue5_exposure_ev=%.1f output_srgb=1"),
 			CaptureStatsLogCount,
 			RenderTarget.SizeX,
 			RenderTarget.SizeY,
@@ -124,7 +142,8 @@ bool ReadRenderTargetPixels(
 			static_cast<double>(ChannelSums[0]) / PixelCount,
 			static_cast<double>(ChannelSums[1]) / PixelCount,
 			static_cast<double>(ChannelSums[2]) / PixelCount,
-			MaxChannel);
+			MaxChannel,
+			CaptureExposureEv);
 	}
 
 	const int32 WarmupFrames = FMath::Max(
@@ -151,19 +170,21 @@ bool ReadRenderTargetPixels(
 		UE_LOG(
 			LogImageCompression,
 			Warning,
-			TEXT("EDGE_CAPTURE_READ_BLACK size=%dx%d linear_to_srgb=1; capture may not have completed or the scene/clear color is black"),
+			TEXT("EDGE_CAPTURE_READ_BLACK size=%dx%d ue5_exposure_ev=%.1f; capture may not have completed or the scene/clear color is black"),
 			RenderTarget.SizeX,
-			RenderTarget.SizeY);
+			RenderTarget.SizeY,
+			CaptureExposureEv);
 	}
 	else
 	{
 		UE_LOG(
 			LogImageCompression,
 			VeryVerbose,
-			TEXT("EDGE_CAPTURE_READ_OK size=%dx%d max_channel=%d linear_to_srgb=1"),
+			TEXT("EDGE_CAPTURE_READ_OK size=%dx%d max_channel=%d ue5_exposure_ev=%.1f output_srgb=1"),
 			RenderTarget.SizeX,
 			RenderTarget.SizeY,
-			MaxChannel);
+			MaxChannel,
+			CaptureExposureEv);
 	}
 	return true;
 }

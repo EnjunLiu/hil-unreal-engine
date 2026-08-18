@@ -496,6 +496,21 @@ int32 USceneAutomationSubsystem::WarmupSceneCaptures()
             {
                 continue;
             }
+
+            // Capture the same display-referred, tone-mapped color that UE5
+            // presents to the user, then store it as standard sRGB.
+            Capture->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
+            Capture->ShowFlags.SetPostProcessing(true);
+            Capture->ShowFlags.SetTonemapper(true);
+            Capture->PostProcessSettings.bOverride_AutoExposureBias = true;
+            Capture->PostProcessSettings.AutoExposureBias = 2.0f;
+            if (Capture->TextureTarget->RenderTargetFormat != RTF_RGBA8_SRGB
+                || !Capture->TextureTarget->SRGB)
+            {
+                Capture->TextureTarget->RenderTargetFormat = RTF_RGBA8_SRGB;
+                Capture->TextureTarget->SRGB = true;
+                Capture->TextureTarget->UpdateResourceImmediate(false);
+            }
             Capture->CaptureScene();
             ++CapturedComponentCount;
         }
