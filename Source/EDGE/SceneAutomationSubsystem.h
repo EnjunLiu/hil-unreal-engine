@@ -80,6 +80,7 @@ private:
     // untouched.  Enabled only when SceneExecPort > 0.
     void PollSetpointExecutor();
     void HandleSetpointPayload(const FString& Payload);
+    void ApplyExpertFollow(float DeltaTime);
     void ApplyExecutedOffset();
     int32 ExecPort = 0;
     FSocket* ExecServerSocket = nullptr;
@@ -91,6 +92,17 @@ private:
     FVector AsvAnchorLocation = FVector::ZeroVector;
     bool bExecutorActive = false;
     FDelegateHandle WorldTickEndHandle;
+
+    // Optional data-collection controller.  It is enabled only by the
+    // explicit ExpertFollowColor command-line argument and never affects
+    // ordinary SceneAuto or Jetson-controlled runs.
+    bool bExpertFollowEnabled = false;
+    FName ExpertFollowEntityId;
+    float ExpertStandoffM = 3.0F;
+    float ExpertMaxStepCm = 30.0F;
+    float ExpertMaxAccelerationCmPerSec2 = 1200.0F;
+    FVector ExpertVelocityCmPerSec = FVector::ZeroVector;
+    int32 ExpertApplyCount = 0;
 
     // Seconds during which Tick re-applies the canonical ASV yaw.  The
     // Connection blueprint consumes SceneSeed at BeginPlay, spawns its own

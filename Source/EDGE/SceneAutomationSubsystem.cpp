@@ -284,8 +284,34 @@ bool USceneAutomationSubsystem::ReadCommandLine()
     FParse::Value(CommandLine, TEXT("SineSpeed="), SineSpeedCmPerSec);
     FParse::Value(CommandLine, TEXT("SineDelay="), SineDelaySec);
     bYawFixWholeRun = FParse::Param(FCommandLine::Get(), TEXT("YawFixWholeRun"));
+    FString ExpertColor;
+    if (FParse::Value(CommandLine, TEXT("ExpertFollowColor="), ExpertColor))
+    {
+        ExpertColor.TrimStartAndEndInline();
+        ExpertColor.ToLowerInline();
+        if (ExpertColor == TEXT("red"))
+        {
+            ExpertFollowEntityId = TEXT("target_red");
+        }
+        else if (ExpertColor == TEXT("blue"))
+        {
+            ExpertFollowEntityId = TEXT("target_blue");
+        }
+        else
+        {
+            FailAndExit(TEXT("ExpertFollowColor must be red or blue"));
+            return false;
+        }
+        bExpertFollowEnabled = true;
+        FParse::Value(CommandLine, TEXT("ExpertStandoffM="), ExpertStandoffM);
+        FParse::Value(CommandLine, TEXT("ExpertMaxStepCm="), ExpertMaxStepCm);
+        FParse::Value(
+            CommandLine,
+            TEXT("ExpertMaxAccelerationCmPerSec2="),
+            ExpertMaxAccelerationCmPerSec2);
+    }
     FParse::Value(CommandLine, TEXT("SceneExecPort="), ExecPort);
-    if (ExecPort > 0)
+    if (ExecPort > 0 || bExpertFollowEnabled)
     {
         // Apply setpoint displacements after the whole world tick so the
         // executor wins over any blueprint-side position control.
@@ -308,6 +334,14 @@ bool USceneAutomationSubsystem::ReadCommandLine()
         || SineSpeedCmPerSec <= 0.0)
     {
         FailAndExit(TEXT("invalid slot/layout/motion/seed/runtime argument"));
+        return false;
+    }
+    if (bExpertFollowEnabled
+        && (ExpertStandoffM <= 0.0F
+            || ExpertMaxStepCm <= 0.0F
+            || ExpertMaxAccelerationCmPerSec2 <= 0.0F))
+    {
+        FailAndExit(TEXT("invalid expert follow parameters"));
         return false;
     }
     return true;
@@ -497,20 +531,11 @@ int32 USceneAutomationSubsystem::WarmupSceneCaptures()
                 continue;
             }
 
-            // Capture the same display-referred, tone-mapped color that UE5
-            // presents to the user, then store it as standard sRGB.
+            // Capture display-referred, tone-mapped color while preserving the
+            // Scene Capture and Render Target settings authored in UE5.
             Capture->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
             Capture->ShowFlags.SetPostProcessing(true);
             Capture->ShowFlags.SetTonemapper(true);
-            Capture->PostProcessSettings.bOverride_AutoExposureBias = true;
-            Capture->PostProcessSettings.AutoExposureBias = 2.0f;
-            if (Capture->TextureTarget->RenderTargetFormat != RTF_RGBA8_SRGB
-                || !Capture->TextureTarget->SRGB)
-            {
-                Capture->TextureTarget->RenderTargetFormat = RTF_RGBA8_SRGB;
-                Capture->TextureTarget->SRGB = true;
-                Capture->TextureTarget->UpdateResourceImmediate(false);
-            }
             Capture->CaptureScene();
             ++CapturedComponentCount;
         }
@@ -634,6 +659,10 @@ void USceneAutomationSubsystem::Tick(float DeltaTime)
             nullptr,
             ETeleportType::TeleportPhysics);
     }
+    if (bExpertFollowEnabled)
+    {
+        ApplyExpertFollow(DeltaTime);
+    }
     // Diagnostics: sample world positions once per second to verify target
     // motion and to detect any blueprint-driven ASV drift.
     if (FMath::FloorToInt(ElapsedSeconds) != LastPosSampleSecond)
@@ -679,6 +708,75 @@ void USceneAutomationSubsystem::Tick(float DeltaTime)
             SceneSeed,
             ElapsedSeconds);
         FPlatformMisc::RequestExit(false);
+    }
+}
+
+void USceneAutomationSubsystem::ApplyExpertFollow(float DeltaTime)
+{
+    AActor* Target = TargetActors.FindRef(ExpertFollowEntityId).Get();
+    AActor* Asv = AsvActor.Get();
+    if (Target == nullptr || Asv == nullptr || DeltaTime <= SMALL_NUMBER)
+    {
+        return;
+    }
+
+    const FVector Relative = Target->GetActorLocation() - Asv->GetActorLocation();
+    const float DistanceCm = FVector2D(Relative.X, Relative.Y).Size();
+    if (DistanceCm <= SMALL_NUMBER)
+    {
+        return;
+    }
+
+    const FVector Radial = FVector(Relative.X, Relative.Y, 0.0F) / DistanceCm;
+    const float ErrorCm = DistanceCm - ExpertStandoffM * 100.0F;
+    const FVector TargetVelocity =
+        (SineParams.Contains(ExpertFollowEntityId))
+            ? FVector(
+                SineParams[ExpertFollowEntityId].ForwardSpeedCmPerSec,
+                0.0F,
+                0.0F)
+            : FVector::ZeroVector;
+    const FVector DesiredVelocity = TargetVelocity + Radial * (0.80F * ErrorCm);
+    const float MaxVelocityChange =
+        ExpertMaxAccelerationCmPerSec2 * DeltaTime;
+    const FVector VelocityDelta = DesiredVelocity - ExpertVelocityCmPerSec;
+    const float DeltaSize = VelocityDelta.Size();
+    if (DeltaSize > MaxVelocityChange)
+    {
+        ExpertVelocityCmPerSec += VelocityDelta * (MaxVelocityChange / DeltaSize);
+    }
+    else
+    {
+        ExpertVelocityCmPerSec = DesiredVelocity;
+    }
+
+    FVector Step = ExpertVelocityCmPerSec * DeltaTime;
+    Step.Z = 0.0F;
+    const float StepSize = FVector2D(Step.X, Step.Y).Size();
+    if (StepSize > ExpertMaxStepCm)
+    {
+        Step *= ExpertMaxStepCm / StepSize;
+    }
+    if (!bExecutorActive)
+    {
+        AsvAnchorLocation = Asv->GetActorLocation();
+    }
+    ExecutedOffset += Step;
+    bExecutorActive = true;
+    ++ExpertApplyCount;
+    if (ExpertApplyCount == 1 || ExpertApplyCount % 25 == 0)
+    {
+        UE_LOG(
+            LogSceneAutomation,
+            Display,
+            TEXT("SCENE_EXPERT_APPLY slot=%s count=%d entity=%s dx_cm=%.3f dy_cm=%.3f distance_m=%.3f error_m=%.3f"),
+            *SlotId,
+            ExpertApplyCount,
+            *ExpertFollowEntityId.ToString(),
+            Step.X,
+            Step.Y,
+            DistanceCm / 100.0F,
+            ErrorCm / 100.0F);
     }
 }
 
@@ -899,7 +997,7 @@ void USceneAutomationSubsystem::HandleSetpointPayload(const FString& Payload)
 
 void USceneAutomationSubsystem::ApplyExecutedOffset()
 {
-    if (!bExecutorActive || ExecPort <= 0)
+    if (!bExecutorActive || (!bExpertFollowEnabled && ExecPort <= 0))
     {
         return;
     }

@@ -9,3 +9,9 @@ DerivedDataCache/
 *.user
 *.userprefs
 Thumbs.db
+
+WORKSPACE_CONTEXT.md
+
+__pycache__/
+*.pyc
+
