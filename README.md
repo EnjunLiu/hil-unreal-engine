@@ -2,7 +2,7 @@
 
 UE 5.6 scene for ASV software-in-the-loop (HIL) with Jetson. Root map: `/Game/Main_Map`.
 
-Part of the [asv-hil-platform](https://github.com/EnjunLiu/asv-hil-platform) stack. Sibling repos: training (`asv-vla-training`), Jetson runtime (`asv-jetson-ws`), ESP32 firmware (`asv-esp32-firmware`).
+Part of the [hil-platform](https://github.com/EnjunLiu/hil-platform) stack. Sibling repos: training ([`hil-training`](https://github.com/EnjunLiu/hil-training)), Jetson runtime ([`hil-jetson`](https://github.com/EnjunLiu/hil-jetson)), ESP32 firmware ([`hil-esp32`](https://github.com/EnjunLiu/hil-esp32)).
 
 ## Role
 
