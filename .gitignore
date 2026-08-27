@@ -1,17 +1,46 @@
+# Unreal Engine build / editor outputs
 .vs/
 Binaries/
 Intermediate/
 Saved/
 DerivedDataCache/
+Build/
 *.sln
 *.suo
 *.opensdf
 *.user
 *.userprefs
 Thumbs.db
+.DS_Store
 
+# Local agent / machine handover (do not publish)
+AGENTS.md
 WORKSPACE_CONTEXT.md
+.cursor/
+.vscode/
+.idea/
 
+# Editor user folders and USD import staging
+Content/Developers/
+Content/Collections/
+Content/Python/
+Content/Assets/
+
+# Local asset-pipeline / MCP plugin (not required for HIL runtime)
+Plugins/
+scripts/
+
+# One-off local tools (not part of the published HIL runtime)
+tools/rebuild_ocean_water.py
+tools/rename_chinese_assets.py
+tools/blender_export_usd.py
+tools/import_usd_manifest.py
+tools/rebuild_asset_manifest.py
+tools/ue_import_runner.py
+tools/ue_mcp_client.py
+tools/asset_pipeline_common.py
+
+# Python cache
 __pycache__/
-*.pyc
-
+*.py[cod]
+.pytest_cache/

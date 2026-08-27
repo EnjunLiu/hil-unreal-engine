@@ -3,8 +3,8 @@ import unittest
 
 
 PROJECT = Path(__file__).resolve().parents[1]
-COMPRESSION_SOURCE = PROJECT / "Source/EDGE/Private/ImageCompressionLibrary.cpp"
-AUTOMATION_SOURCE = PROJECT / "Source/EDGE/SceneAutomationSubsystem.cpp"
+COMPRESSION_SOURCE = PROJECT / "Source/HILSimulation/Private/ImageCompressionLibrary.cpp"
+AUTOMATION_SOURCE = PROJECT / "Source/HILSimulation/SceneAutomationSubsystem.cpp"
 
 
 class CaptureColorContractTest(unittest.TestCase):

@@ -2,10 +2,10 @@ from pathlib import Path
 
 
 PROJECT = Path(__file__).resolve().parents[1]
-SOURCE = (PROJECT / "Source/EDGE/SceneAutomationSubsystem.cpp").read_text(
+SOURCE = (PROJECT / "Source/HILSimulation/SceneAutomationSubsystem.cpp").read_text(
     encoding="utf-8"
 )
-HEADER = (PROJECT / "Source/EDGE/SceneAutomationSubsystem.h").read_text(
+HEADER = (PROJECT / "Source/HILSimulation/SceneAutomationSubsystem.h").read_text(
     encoding="utf-8"
 )
 
