@@ -33,6 +33,9 @@ tools/rename_chinese_assets.py
 tools/rebuild_asset_manifest.py
 docs/assets/_*.py
 
+# Generated asset inventory (not needed at runtime)
+ASSET_MANIFEST.json
+
 # Plugin / tool caches
 Plugins/**/__pycache__/
 tools/__pycache__/
