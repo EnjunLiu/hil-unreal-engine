@@ -1,5 +1,7 @@
 # 面向 ASV 仿真的硬件在环实验平台 - Unreal Engine 端
 
+基于 Unreal Engine 的海洋场景仿真平台，基于 TCP 对外暴露信息接口
+
 ## 功能接口
 
 
